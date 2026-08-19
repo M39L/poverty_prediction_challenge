@@ -66,6 +66,7 @@ def run_inference(test_df, prep, models, poverty_models, train_cdfs, survey_log_
     
     # Final post-processing to guarantee logical consistency (CDF monotonicity)
     cols = [c for c in pred_poverty.columns if "pct_hh_below_" in c]
-    pred_poverty[cols] = np.maximum.accumulate(pred_poverty[cols].values, axis=1)
+    poverty_values = np.clip(pred_poverty[cols].values, 0.0, 1.0)
+    pred_poverty[cols] = np.maximum.accumulate(poverty_values, axis=1)
 
     return pred_cons, pred_poverty

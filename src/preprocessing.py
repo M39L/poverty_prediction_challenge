@@ -1,4 +1,3 @@
-import pandas as pd
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
 
@@ -43,7 +42,12 @@ class FeaturePreprocessor:
 
     def _binary_encode(self, df):
         """Internal helper to convert text binary features to integers."""
-        for c in self.binary_cols + [c for c in df.columns if c.startswith("consumed")]:
+        consumed_cols = [
+            c
+            for c in df.columns
+            if c.startswith("consumed") and c != "consumed_yes_count"
+        ]
+        for c in self.binary_cols + consumed_cols:
             if c in df.columns:
                 df[c] = df[c].map(self.binary_map).fillna(0).astype(int)
 
@@ -61,8 +65,9 @@ class FeaturePreprocessor:
         for c in self.nominal_cols:
             if c in df.columns:
                 le = LabelEncoder()
-                df[c] = df[c].fillna("missing").astype(str)
-                le.fit(df[c])
+                values = df[c].fillna("missing").astype(str)
+                # Reserve a fallback class for categories first seen at inference.
+                le.fit(np.append(values.to_numpy(), "missing"))
                 self.label_encoders[c] = le
         
         # Define the final feature set
