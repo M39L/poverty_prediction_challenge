@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.venv/
+venv/
+
+# Competition data must be downloaded from DrivenData.
+data/*.csv
+
+# Locally regenerated submissions.
+result/*.csv

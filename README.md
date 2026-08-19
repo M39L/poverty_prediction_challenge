@@ -1,205 +1,219 @@
-# Poverty Prediction Challenge
+# Poverty Prediction Challenge — 25th place
 
-## 📋 Challenge Description (Official)
+[![CI](https://github.com/M39L/poverty_prediction_challenge/actions/workflows/ci.yml/badge.svg)](https://github.com/M39L/poverty_prediction_challenge/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-### Problem Definition
+A survey-adaptive machine-learning pipeline developed for the World Bank and
+DrivenData **Poverty Prediction Challenge**. The selected competition
+submission finished **25th** on the final leaderboard.
 
-The goal of this challenge is to predict poverty outcomes using household survey data.  
-Specifically, the task is to predict:
+This repository is a cleaned and reproducible implementation of the approach
+developed during the competition. It predicts both household consumption and
+population poverty-rate distributions under survey-to-survey domain shift.
 
-1. **Household-level consumption**  
-   - Daily per capita consumption (2017 USD PPP)
+- **Final rank:** 25th
+- **Scale:** 1,322 registered participants and 500+ valid solutions
+- **Portfolio result:** top 5% of valid solutions
+- **Stack:** Python, pandas, NumPy, scikit-learn, LightGBM, pytest, GitHub Actions
+- **Competition:** [Poverty Prediction Challenge](https://www.cisco.drivendata.org/competitions/305/competition-worldbank-poverty/)
+- **Organizer recap:** [World Bank challenge overview](https://www.worldbank.org/en/topic/measuringpoverty/brief/poverty-prediction-challenge)
 
-2. **Population poverty rates**  
-   - Percentage of the population living strictly below **19 predefined poverty thresholds**
+## Leaderboard result
 
----
+The final ranking shown on my DrivenData profile:
 
-### Dataset Details
+![25th place in the Poverty Prediction Challenge](assets/leaderboard-rank-25.png)
 
-The dataset consists of household-level survey responses, including:
-- Demographics
-- Education
-- Utilities
-- Food consumption and assets
+## Problem
 
-**Training surveys**
-- 100000
-- 200000
-- 300000
+Many countries run comprehensive household-consumption surveys infrequently.
+The challenge simulated the task of using older, labeled surveys to estimate
+welfare indicators for newer surveys with no consumption labels.
 
-**Test surveys**
-- 400000
-- 500000
-- 600000
+The model had to produce two outputs for each test survey:
 
----
+1. daily per-capita household consumption in 2017 USD PPP;
+2. population poverty rates at 19 predefined consumption thresholds.
 
-### Performance Metric
+The central modeling difficulty is **domain shift**: train and test surveys
+differ in geography, time, sampling design and consumption patterns.
 
-Model performance is evaluated using a blended metric:
+### Competition metric
 
-\[
-\text{Score} = 0.9 \cdot \text{W-MAPE}_{rates} + 0.1 \cdot \text{MAPE}_{cons}
-\]
+The primary error combines:
 
-Where:
-- **MAPE\_cons** — Mean Absolute Percentage Error for household consumption
-- **W-MAPE\_rates** — Weighted MAPE for poverty rates  
-  (higher weight for thresholds near the 40% baseline percentile)
+- **90%** weighted MAPE for the poverty-rate distribution;
+- **10%** household-level MAPE for consumption.
 
----
+Lower is better. Thresholds near the 40th percentile receive the highest
+weight in the poverty component.
 
-## 🧠 Solution Overview
+## Solution
 
-This solution combines **machine learning techniques with domain-informed economic feature engineering** to improve robustness across heterogeneous surveys.
+The final approach combines economic feature engineering with explicit
+survey-domain adaptation:
 
-Instead of relying only on raw survey metrics, the model explicitly incorporates **consumption diversity as an economic proxy for welfare**.
+1. **Consumption diversity.** `consumed_yes_count` counts positive consumption
+   indicators and acts as a compact proxy for household welfare.
+2. **Survey-specific regressors.** A separate LightGBM model learns the
+   consumption distribution of each labeled survey.
+3. **Poverty-CDF models.** Nineteen weighted LightGBM models estimate the
+   probability of falling below each official poverty threshold.
+4. **CDF-based donor matching.** The predicted CDF of a target survey is
+   compared with known training-survey CDFs to determine ensemble weights.
+5. **Constrained output.** Predictions are clipped to valid ranges and poverty
+   rates are made monotonically non-decreasing across thresholds.
 
-### Key Ideas
+```mermaid
+flowchart LR
+    A[Raw household surveys] --> B[Feature engineering]
+    B --> C[Survey-specific consumption models]
+    B --> D[19 poverty-threshold models]
+    D --> E[Predicted target-survey CDF]
+    E --> F[CDF similarity weights]
+    C --> G[Weighted consumption ensemble]
+    F --> G
+    G --> H[Calibrated household predictions]
+    E --> I[Bounded monotonic poverty rates]
+```
 
-#### 1. Economic Feature: Consumption (Dietary) Diversity
+## Leakage-safe validation
 
-A central feature of this solution is a **consumption diversity indicator**, motivated by economic theory:
+Random row splits would leak survey-specific patterns into validation. The
+repository therefore includes **leave-one-survey-out validation**:
 
-- Households with higher welfare typically consume a **wider variety of goods**
-- Poorer households tend to concentrate spending on a narrow subset of essentials
+1. one complete survey is held out;
+2. preprocessing is fitted only on the other surveys;
+3. all consumption and poverty models are trained only on donor surveys;
+4. the untouched survey is transformed and scored;
+5. the process is repeated for all three surveys.
 
-**Implementation**
-- For each household, the number of distinct items consumed within the recall window is counted
-- This feature (`consumed_yes_count`) acts as a strong proxy for disposable income
-- Empirically, it improves generalization across surveys more than many raw categorical indicators
+This is deliberately stricter than an ordinary train/validation split and
+better represents the hidden test-survey setting.
 
-This allows the model to learn **structural economic signals**, not just survey-specific correlations.
+Run the full validation with:
 
----
+```bash
+python validate.py --data-dir data --n-estimators 400
+```
 
-#### 2. Survey-Specific Modeling (Domain Shift Aware)
+For a faster pipeline check:
 
-Household surveys differ substantially across:
-- Geography
-- Timing
-- Sampling design
-- Consumption baskets
+```bash
+python validate.py --data-dir data --n-estimators 50
+```
 
-To address this **domain shift**:
-- Separate models are trained for each training survey
-- Predictions are combined using survey-level similarity rather than naive pooling
+### Model comparison
 
----
+The table below was generated with 100 trees per model to keep the public
+validation experiment practical. Scores are averaged across the three
+held-out surveys; lower is better.
 
-#### 3. CDF Matching & Similarity-Based Ensembling
+| Model | Consumption MAPE | Poverty weighted MAPE | Blended score |
+|---|---:|---:|---:|
+| Pooled LightGBM baseline | 0.2914 | 0.1289 | 14.5107 |
+| **Survey-adaptive CDF ensemble** | **0.2919** | **0.0205** | **4.7651** |
 
-For each survey:
-- A poverty **Cumulative Distribution Function (CDF)** is estimated
-- Test surveys are matched to training surveys based on CDF similarity
-- Final predictions are generated via a **distance-weighted ensemble**
+The adaptive model reduces the mean blended validation error by **67.2%**,
+almost entirely through better survey-level poverty-rate estimation. Its
+household-consumption MAPE remains comparable to the pooled baseline.
 
-This reduces sensitivity to:
-- Survey-specific noise
-- Leaderboard overfitting
-- Random threshold effects
+Fold-level results are written to `reports/validation_results.csv`.
 
----
-
-#### 4. Logical Post-Processing
-
-To ensure valid outputs:
-- Poverty rates are forced to be **monotonically increasing** across thresholds using cumulative constraints
-- Mean-shift calibration aligns predicted and reference distributions
-
----
-
-### Why This Works
-
-- Combines **economic intuition + statistical learning**
-- Reduces reliance on leaderboard luck
-- Produces logically consistent poverty distributions
-- Improves robustness under limited survey coverage
-
-This approach consistently outperforms metric-only or pooled-survey baselines.
-
----
-
-## 📁 Project Structure
+## Repository layout
 
 ```text
-├── data/                       # Input CSVs (from DrivenData)
-├── result/                     # Final model outputs
-│   ├── predicted_household_consumption.csv
-│   └── predicted_poverty_distribution.csv
-├── src/
-│   ├── __init__.py
-│   ├── preprocessing.py        # Feature engineering
-│   ├── trainer.py              # Survey-specific training
-│   ├── inference.py            # CDF matching & ensembling
-│   └── utils.py                # Softmax, CDF utilities
-├── main.py                     # End-to-end pipeline
-├── requirements.txt
-└── README.md
+.
+|-- main.py                     # End-to-end training and submission pipeline
+|-- validate.py                 # Leave-one-survey-out model comparison
+|-- src/
+|   |-- preprocessing.py        # Encoding and economic features
+|   |-- trainer.py              # Consumption and poverty models
+|   |-- inference.py            # CDF matching and post-processing
+|   |-- metrics.py              # Competition-aligned offline metrics
+|   `-- utils.py
+|-- tests/                      # Data-independent unit tests
+|-- reports/                    # Fold-level validation results
+|-- data/README.md              # Dataset download instructions
+|-- requirements.txt
+`-- requirements-dev.txt
 ```
 
----
+Competition data and generated submissions are intentionally excluded from
+Git. This keeps the repository small and respects the competition data terms.
 
-## 🚀 Getting Started
+## Reproduce the submission pipeline
 
-### 1. Clone the repository
+Python 3.10 or 3.11 is recommended.
 
 ```bash
-git clone https://github.com/your-username/poverty-prediction-challenge.git
-cd poverty-prediction-challenge
+git clone https://github.com/M39L/poverty_prediction_challenge.git
+cd poverty_prediction_challenge
+python -m venv .venv
 ```
 
----
-
-### 2. Install dependencies
+Activate the environment and install dependencies:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
----
-
-### 3. Download the data
-
-Obtain the datasets from **DrivenData** and place all CSV files into the `data/` directory.
-
----
-
-### 4. Run the full pipeline
+Download the four competition files described in
+[`data/README.md`](data/README.md), place them in `data/`, and run:
 
 ```bash
 python main.py
 ```
 
-This will:
-- Load and preprocess the data
-- Train survey-specific models
-- Generate consumption predictions
-- Convert predictions into poverty distributions
-- Save final submission files to the `result/` directory
+Custom paths are supported:
 
----
+```bash
+python main.py --data-dir path/to/data --output-dir path/to/results
+```
 
-## 📤 Outputs
+The command writes submission-ready files with the official schemas:
 
-After running the pipeline, the following files will be created:
+- `predicted_household_consumption.csv` — 103,023 household predictions;
+- `predicted_poverty_distribution.csv` — 3 surveys × 19 thresholds.
 
-- `result/predicted_household_consumption.csv`
-- `result/predicted_poverty_distribution.csv`
+## Tests and CI
 
-These files are ready for direct submission.
+The tests cover:
 
----
+- numerical stability of the ensemble softmax;
+- feature engineering;
+- unseen categorical values;
+- competition metric calculations;
+- bounded and monotonic poverty post-processing.
 
-## ✅ Notes
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+```
 
-- Poverty rate predictions are guaranteed to be **monotonic across thresholds**
-- The pipeline is fully deterministic given the same random seed
-- Designed for clarity, reproducibility, and leaderboard optimization
+GitHub Actions runs the suite on every push and pull request.
 
----
+## What worked
 
-## 📜 License
+- modeling each source survey separately instead of assuming one shared
+  consumption distribution;
+- using consumption diversity as a domain-relevant welfare feature;
+- weighting donor models by survey-level poverty-CDF similarity;
+- enforcing domain constraints on the aggregate poverty output;
+- validating on entire unseen surveys rather than random household rows.
 
-This project is provided for educational and research purposes.
+## Limitations and next steps
+
+- only three labeled surveys are available, so validation variance is high;
+- the CDF ensemble uses hand-selected LightGBM hyperparameters;
+- experiment metadata from the original exploratory notebooks was not tracked
+  systematically;
+- future work could add Optuna, MLflow, SHAP-based ablations and serialized
+  model artifacts for batch inference.
+
+## License and data
+
+The source code is released under the [MIT License](LICENSE). Competition data
+is not redistributed; download it directly from DrivenData under the
+competition's terms.
