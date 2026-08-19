@@ -19,6 +19,12 @@ population poverty-rate distributions under survey-to-survey domain shift.
 - **Competition:** [Poverty Prediction Challenge](https://www.cisco.drivendata.org/competitions/305/competition-worldbank-poverty/)
 - **Organizer recap:** [World Bank challenge overview](https://www.worldbank.org/en/topic/measuringpoverty/brief/poverty-prediction-challenge)
 
+## Leaderboard result
+
+The final ranking shown on my DrivenData profile:
+
+![25th place in the Poverty Prediction Challenge](assets/leaderboard-rank-25.png)
+
 ## Problem
 
 Many countries run comprehensive household-consumption surveys infrequently.
